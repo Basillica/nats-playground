@@ -80,48 +80,44 @@ This service is the entry point for device data. It publishes incoming payloads 
     * Ingest a Data Point
 Simulate a device sending a data payload. The payload must include a valid organization_id that was created via the Management Service.
 
-Method: POST
+        * Method: POST
+        * Endpoint: /ingest
+        * Example Request:
 
-Endpoint: /ingest
+        ```bash
+        curl -X POST http://localhost:8080/ingest -H "Content-Type: application/json" -d '{
+            "organization_id": "orgA",
+            "device_id": "machine-123",
+            "sensor_name": "temp1",
+            "value": 85.0,
+            "timestamp": 1672531200
+        }'
+        ```
 
-Example Request:
-
-Bash
-
-curl -X POST http://localhost:8080/ingest -H "Content-Type: application/json" -d '{
-    "organization_id": "orgA",
-    "device_id": "machine-123",
-    "sensor_name": "temp1",
-    "value": 85.0,
-    "timestamp": 1672531200
-}'
-End-to-End Testing
+## End-to-End Testing
 To test the entire data pipeline, follow these steps:
 
-Start all services with docker-compose up --build.
-
-Create an organization using the Management Service endpoint:
+1. Start all services with `docker-compose up --build`.
+2. Create an organization using the Management Service endpoint:
+```bash
 curl -X POST http://localhost:8081/organizations -H "Content-Type: application/json" -d '{"id": "orgA", "name": "A Corp"}'
-
-Simulate consecutive data points from a device with a temperature value above the hardcoded threshold (80.0) to trigger an alert.
-Run the curl command for data ingestion three times to meet the Analysis Engine's condition for a persistent breach.
+```
+3. Simulate consecutive data points from a device with a temperature value above the hardcoded threshold (80.0) to trigger an alert.
+Run the `curl` command for data ingestion three times to meet the Analysis Engine's condition for a persistent breach.
+```bash
 curl -X POST http://localhost:8080/ingest -H "Content-Type: application/json" -d '{"organization_id": "orgA", "device_id": "machine-123", "sensor_name": "temp1", "value": 90.0, "timestamp": 1}'
+```
 
-Observe the logs from the running Docker containers. You will see:
+4. Observe the logs from the running Docker containers. You will see:
 
-ingestion-service: Logs confirming data publication.
+* `ingestion-service`: Logs confirming data publication.
+* `analysis-engine`: Logs showing a threshold breach and, on the third message, the alert being published to the notifications subject.
+* `notification-service`: Logs confirming the alert was received and a "fake email" was sent.
+* `data-persistence-service`: Logs confirming the data point was successfully written to InfluxDB.
 
-analysis-engine: Logs showing a threshold breach and, on the third message, the alert being published to the notifications subject.
-
-notification-service: Logs confirming the alert was received and a "fake email" was sent.
-
-data-persistence-service: Logs confirming the data point was successfully written to InfluxDB.
-
-Observability
+## Observability
 You can monitor the health and performance of the system using the provided dashboards.
 
-NATS Monitoring: http://localhost:8222
-
-Prometheus UI: http://localhost:9090
-
-Grafana Dashboards: http://localhost:3000 (Login with admin/password). You can connect to the Prometheus and Loki data sources to build custom dashboards.
+* NATS Monitoring: `http://localhost:8222`
+* Prometheus UI: `http://localhost:9090`
+* Grafana Dashboards: `http://localhost:3000` (Login with `admin/password`). You can connect to the Prometheus and Loki data sources to build custom dashboards.
