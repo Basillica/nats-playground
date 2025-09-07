@@ -1,0 +1,165 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:2.10.7
+    command: -js
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: iot_platform
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:6.2-alpine
+    ports:
+      - "6379:6379"
+
+  influxdb:
+    image: influxdb:2.7
+    restart: always
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: password
+      DOCKER_INFLUXDB_INIT_ORG: your-influxdb-org
+      DOCKER_INFLUXDB_INIT_BUCKET: iot-data-bucket
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: mysecrettoken
+    healthcheck:
+      test: [ "CMD", "influx", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  management-service:
+    build:
+      context: ./management-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      NATS_URL: nats://nats:4222
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.management.rule=Host(`localhost`) && PathPrefix(`/api/v1/management`)"
+      - "traefik.http.routers.management.entrypoint=web"
+    depends_on:
+      - nats
+      - postgres
+
+  ingestion-service:
+    build:
+      context: ./ingestion-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      NATS_URL: nats://nats:4222
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ingestion.rule=Host(`localhost`) && PathPrefix(`/api/v1/ingestion`)"
+      - "traefik.http.routers.ingestion.entrypoint=web"
+    depends_on:
+      - nats
+
+  analysis-engine:
+    build:
+      context: ./analysis-engine
+      dockerfile: Dockerfile
+    environment:
+      NATS_URL: nats://nats:4222
+      REDIS_ADDR: redis:6379
+    depends_on:
+      - nats
+      - redis
+
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    environment:
+      NATS_URL: nats://nats:4222
+    depends_on:
+      - nats
+
+  data-persistence-service:
+    build:
+      context: ./data-persistence-service
+      dockerfile: Dockerfile
+    environment:
+      NATS_URL: nats://nats:4222
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: mysecrettoken
+    depends_on:
+      - nats
+      - influxdb
+
+  prometheus:
+    image: prom/prometheus:v2.47.1
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - "9090:9090"
+    depends_on:
+      - nats # Prometheus will scrape metrics from the NATS server
+
+  grafana:
+    image: grafana/grafana:10.1.5
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=password
+    depends_on:
+      - prometheus
+
+  loki:
+    image: grafana/loki:2.8.3
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./loki/config.yml:/etc/loki/config.yml
+
+  promtail:
+    image: grafana/promtail:2.8.3
+    container_name: promtail
+    volumes:
+      - /var/log:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./promtail/config.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  traefik:
+    image: traefik:v2.10
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+      - "8080:8080" # The Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  influxdb-data:
